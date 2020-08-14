@@ -1,0 +1,264 @@
+#This script explains how the inversion haplotypes in LG19 were reassembled.
+
+# Variant calling
+#
+# Give the standard pipeline for BWA-GATK.
+
+# NJ-tree for identification of homozygotes
+#
+plink --vcf $VCF --distance 1-ibs square gz --out $OUT --allow-extra-chr
+#
+library(ape)
+nms = read.table("$OUT.mdist.id", header=F, sep="\t")[,1]
+dst = read.table("$OUT.mdist.gz", header=F, sep="\t", col.names=nms, fill=T)
+njt=nj(as.dist(dst))
+plot(njt)
+
+# This gave the sets of A and B samples
+#
+cat > alleleA.txt << EOF
+FIN-PYO-1
+FIN-PYO-12
+FIN-PYO-13
+FIN-PYO-2
+FIN-PYO-20
+FIN-PYO-25
+FIN-PYO-27
+FIN-PYO-33
+FIN-PYO-4
+FIN-PYO-5
+FIN-PYO-A35
+FIN-PYO-B35
+FIN-KRK-35
+FIN-KRK-50
+EOF
+
+cat > alleleB.txt << EOF
+FIN-PYO-21
+FIN-PYO-22
+FIN-KRK-33
+FIN-KRK-42
+FIN-KRK-44
+FIN-KRK-45
+FIN-KRK-46
+FIN-KRK-48
+FIN-KRK-52
+FIN-KRK-53
+FIN-KRK-63
+FIN-KRK-66
+FIN-KRK-76
+EOF
+
+# Identification of unplaced contigs belonging to the haplotypes
+# 
+REG="LG19:5800000-7500000"
+
+for X in A B; do
+ for SMP in `cat allele$X.txt`; do 
+  samtools view -q20 $SMP.bam $REG | awk '$7~/ctg/{print $7}'; 
+ done > allele$X.contigs 
+done
+
+sort alleleB.contigs alleleA.contigs | uniq -c | sort -k1n | awk '$1>9{print $2}' > contigs.txt
+
+# Extraction of Illumina reads for alleles A and B
+#
+for X in A B; do
+ for SMP in `cat allele$X.txt`; do 
+  samtools view -h $SMP.bam $REG `cat contigs.txt` \
+  | samtools sort -n -T temp - \
+  | bedtools bamtofastq -i - \
+  -fq allele$X/$SMP.1.fq -fq2 allele$X/$SMP.2.fq
+ done
+ cat allele$X/*.1.fq > allele$X/R1.fq
+ cat allele$X/*.2.fq > allele$X/R2.fq
+done
+
+# Extraction of PacBio reads for teh inversion region
+#
+samtools faidx $REF $REG `cat contigs.txt` > contigs.fa
+
+minimap2 -ax map-pb contigs.fa pacbio.fq | samtools view -h -F4 -q10 > pacbio_contigs.bam
+samtools view pacbio_contigs.bam | awk '{print $1}' | uniq | sort --version-sort | pacbio_contigs_reads.txt
+
+samtools view -q20 pacbio_contigs.bam | \
+awk '{
+s=$6
+match(s,/^([0-9]+)(S)/,sar);
+s=substr($6,RSTART+RLENGTH);
+b=sar[1]
+match(s,/([0-9]+)(S)$/,sar);
+e=sar[1]
+t=0;
+while(match(s,/([0-9]+)([MIDNSHP])/,sar)){
+    s=substr(s,RSTART+RLENGTH);
+    if(sar[2]~/[MDN]/){
+     t+=sar[1]
+    }
+}
+s=$6
+r=0;
+while(match(s,/([0-9]+)([MIDNSHP])/,sar)){
+    s=substr(s,RSTART+RLENGTH);
+    if(sar[2]~/[MIN]/){
+     r+=sar[1]
+    }
+}
+print $1,(1+b),(1+b+r),r,$3,$4,($4+t),t}' | awk '$4>1000{print $1}'> pacbio_reads.1k.txt
+
+awk 'BEGIN{
+  while(( getline r<ARGV[1]) > 0 ) {
+     reads[r]=1
+  }
+  i=0
+}
+{
+while(( getline l<ARGV[2]) > 0 ) {
+    if(l~/^@/) {
+        i=0
+        n=substr(l,2)
+        if(reads[n]>0){i=1}
+    }
+    if(i>0) {
+        print l
+    }
+}
+}' pacbio_reads.1k.txt pacbio_full.fq > pacbio_reads.1k.fq
+
+grep -A1 ^@ pacbio_reads.1k.fastq | sed 's/^@/>/' | grep -v -e -- | perl -pe 's/^(>\S+)/$1 RQ=0.8/' > pacbio_reads.1k.fa
+
+awk '{if($1~/>/){n=$1}else{if(length($1)>5000){print n,"\n",$1}}}' pacbio_reads.1k.fa > pacbio_reads.5k.fa
+
+# Assembly with Canu
+#
+# Count kmers for both parent strains
+#
+for name in alleleA alleleB; do
+ cat $name/R?.fastq | \
+ awk -v name=$name '{if (NR%2000000==1) {num+=1; print ">"name"."num} if (NR%4==2) print $1"N"}' > $name/$name.fa
+
+ meryl -threads 16 -B -C -m 16 -s $name/$name.fa -o $name/$name 
+done
+
+
+# Subtract in both directions. HapA - hapB = hapA only and HapB - hapA = hapB only
+#
+meryl -M difference -s alleleA/alleleA -s alleleB/alleleB -o alleleA/alleleA.only
+meryl -M difference -s alleleB/alleleB -s alleleA/alleleA -o alleleB/alleleB.only
+
+# Get sets, the thresholds to be set based on approximate coverages of the datasets
+#
+meryl -Dh -s alleleA/alleleA > alleleA/alleleA.hist
+meryl -Dh -s alleleB/alleleB > alleleB/alleleB.hist
+
+# R:
+dat = read.table("alleleA/alleleA.hist")
+plot(dat[,1], dat[,2], log="y", xlim=c(0, 500), typ="l")
+dat = read.table("alleleB/alleleB.hist")
+plot(dat[,1], dat[,2], log="y", xlim=c(0, 500), typ="l")
+
+# This gives the depths
+# alleleA: 30X
+# alleleB: 20X
+#
+meryl -Dt -n 30 -s alleleA/alleleA.only |awk '{if (match($1,">")) { COUNT=substr($1, 2, length($1)); } else {print $1" "COUNT}}' |awk '{if ($NF < 150) print $0}' >  alleleA/alleleA.counts.30 &
+
+meryl -Dt -n 20 -s alleleB/alleleB.only |awk '{if (match($1,">")) { COUNT=substr($1, 2, length($1)); } else {print $1" "COUNT}}' |awk '{if ($NF < 150) print $0}' >  alleleB/alleleB.counts.20
+
+
+# Classify the reads, this outputs a read name and a haplotype assignment, or none if ambiguous
+#
+classify alleleA/alleleA.counts.30 alleleB/alleleB.counts.20 pacbio_reads.5k.fa > pacbio.out
+
+# Extract reads matching each haplotype and assemble
+#
+cat pacbio.out | grep Read | grep haplotype0 | awk '{print $2" 1 200000"}' > alleleA.cut &
+cat pacbio.out | grep Read | grep haplotype1 | awk '{print $2" 1 200000"}' > alleleB.cut &
+
+java -cp $cp SubFasta alleleA.cut pacbio_reads.5k.fa > alleleA.fasta
+java -cp $cp SubFasta alleleB.cut pacbio_reads.5k.fa > alleleB.fasta
+
+canu -p asm -d canuA useGrid=false genomeSize=5m -pacbio-raw alleleA.fasta &
+canu -p asm -d canuB useGrid=false genomeSize=5m -pacbio-raw alleleB.fasta &
+
+# For comparison smash them together
+#
+canu -p asm -d combined useGrid=false genomeSize=5m -pacbio-raw pacbio_reads.5k.fa corOutCoverage=500 "batOptions=-dg 3 -db 3 -dr 1 -ca 500 -cp 50"
+
+
+# Polish with pilon 
+#
+bwa mem canuA.fasta alleleA/R1.fq alleleA/R2.fq  | samtools sort -T tA -o alleleA.bam
+samtools index alleleA.bam
+pilon --genome canuA.fasta --frags alleleA.bam --diploid --output pilon_alleleA --changes --vcf 
+
+bwa mem canuB.fasta alleleB/R1.fq alleleB/R2.fq  | samtools sort -T tA -o alleleB.bam 
+samtools index alleleB.bam
+pilon --genome canuB.fasta --frags alleleB.bam --diploid --output pilon_alleleB --changes --vcf
+
+
+# Assembly with Canu
+#
+# Parameter files
+#
+cat > fc_run.cfg << EOF
+[General]
+job_type = local
+
+input_fofn = input.fofn
+input_type = raw
+
+length_cutoff = 5000
+length_cutoff_pr = 5000
+
+sge_option_da = -pe smp 4 -q bigmem
+sge_option_la = -pe smp 20 -q bigmem
+sge_option_pda = -pe smp 6 -q bigmem 
+sge_option_pla = -pe smp 16 -q bigmem
+sge_option_fc = -pe smp 24 -q bigmem
+sge_option_cns = -pe smp 8 -q bigmem
+
+da_concurrent_jobs = 12
+la_concurrent_jobs = 12
+cns_concurrent_jobs = 12
+pda_concurrent_jobs = 12
+pla_concurrent_jobs = 12
+
+pa_HPCdaligner_option =  -v -B128  -e0.75 -M24 -l500 -k18 -h250 -w8 -s100
+ovlp_HPCdaligner_option =  -v -B128  -M24 -k24 -h250 -e.96 -l500 -s100 
+
+pa_DBsplit_option = -a -x500 -s200
+ovlp_DBsplit_option = -s200
+
+falcon_sense_option = --output_multi --min_idt 0.70 --min_cov 2 --max_n_read 400 --n_core 8 
+falcon_sense_skip_contained = False
+
+overlap_filtering_setting = --max_diff 120 --max_cov 120 --min_cov 3 --n_core 8
+EOF
+
+#
+
+cat > fc_unzip.cfg << EOF
+[General]
+job_type = local
+
+[Unzip]
+input_fofn= input.fofn
+input_type = raw
+input_bam_fofn= input_bam.fofn
+
+unzip_concurrent_jobs = 12
+quiver_concurrent_jobs = 12
+EOF
+
+#
+
+cat > input.fofn << EOF
+pacbio_reads.5k.fa
+EOF
+
+# Run Falcon Unzip & Quiver
+#
+fc_run.py fc_run.cfg
+fc_unzip.py fc_unzip.cfg
+fc_quiver.py fc_unzip.cfg
