@@ -2,6 +2,23 @@
 ##########################################################
 #
 #  Lep-Anchor wrapper
+#   
+#    This file is part of Lep-Anchor.
+#
+#    Lep-Anchor is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    Lep-Anchor is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with Lep-Anchor.  If not, see <http://www.gnu.org/licenses/>.
+#
+#    Copyright (C) 2020 Pasi Rastas, pasi.rastas@gmail.com, University of Helsinki
 #
 #  usage: lepanchor_wrapper.sh -f ref.fasta -n num_chr -c chain_file -p paf_file -m map_file1 -m map_file2, ... 
 #
@@ -10,10 +27,6 @@
 #          marey*.png   Marey maps for visual verification
 #          chr*.agp     agp files for each chromosome
 #          scaffolds_chr*.agp agp files for each chromosome in scaffolds (each block of linked contigs as a scaffold)
-#
-#
-#  Pasi Rastas, (c) 2020, pasi.rastas@gmail.com
-#
 ##########################################################
 
 #if [ "$#" -ne 3 ]; then
@@ -29,13 +42,28 @@ function print_usage()
 echo "##########################################################"
 echo "#"
 echo "#  Lep-Anchor wrapper"
+echo "#    This file is part of Lep-Anchor."
+echo "#"
+echo "#    Lep-Anchor is free software: you can redistribute it and/or modify"
+echo "#    it under the terms of the GNU General Public License as published by"
+echo "#    the Free Software Foundation, either version 3 of the License, or"
+echo "#    (at your option) any later version.echo"
+echo "#"
+echo "#    Lep-Anchor is distributed in the hope that it will be useful,"
+echo "#    but WITHOUT ANY WARRANTY; without even the implied warranty of"
+echo "#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the"
+echo "#    GNU General Public License for more details."
+echo "#"
+echo "#    You should have received a copy of the GNU General Public License"
+echo "#    along with Lep-Anchor.  If not, see <http://www.gnu.org/licenses/>."
+echo "#"
+echo "#    Copyright (C) 2020 Pasi Rastas, pasi.rastas@gmail.com, University of Helsinki"
 echo "#"
 echo "#  usage: lepanchor_wrapper.sh -t threads -f ref.fasta -n num_chr -c chain_file -p paf_file -m map_file1 -m map_file2, ... "
 echo "#"
 echo "#  download Lep-Anchor by"
 echo "#  wget https://sourceforge.net/projects/lep-anchor/files/binary%2Bcode.zip/download -O la.zip;unzip la.zip"
 echo "#"
-echo "#  Pasi Rastas, (c) 2020, pasi.rastas@gmail.com"
 echo "#"
 echo "##########################################################"
 }
