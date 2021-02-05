@@ -4,4 +4,4 @@
 
 9sp_\*: Linkage map for nine-spined stickleback. 
 
-
+contigAssignment.csv: Supplementary file showing the assignment of each contig in ver. 6 and ver. 7 references.
